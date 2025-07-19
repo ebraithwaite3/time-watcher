@@ -1,20 +1,23 @@
 // src/services/NotificationService.js
 import { Notifications } from 'react-native-notifications';
 import { Platform } from 'react-native';
+import { DateTime } from 'luxon';
 
 class NotificationService {
-  
   // Configure notifications when app starts
   static configure() {
     console.log('Configuring notifications...');
-    
+
     // Request permissions immediately (for iOS)
     if (Platform.OS === 'ios') {
-      Notifications.ios.checkPermissions().then((currentPermissions) => {
-        console.log('Current iOS permissions:', currentPermissions);
-      }).catch(error => {
-        console.log('Error checking iOS permissions:', error);
-      });
+      Notifications.ios
+        .checkPermissions()
+        .then(currentPermissions => {
+          console.log('Current iOS permissions:', currentPermissions);
+        })
+        .catch(error => {
+          console.log('Error checking iOS permissions:', error);
+        });
     }
 
     // Skip event listeners for now - they seem to be causing issues
@@ -46,14 +49,40 @@ class NotificationService {
   // Schedule notification for session end time
   static scheduleSessionEndNotification(sessionId, endTime, deviceType) {
     try {
-      const notificationTime = new Date(endTime);
-      const now = new Date();
+      // 🔧 FIX: Handle timezone properly for notifications
+      let notificationTime;
+
+      // Handle different input types
+      if (typeof endTime === 'string') {
+        // If it's an ISO string, parse with Luxon to handle timezone correctly
+        notificationTime = DateTime.fromISO(endTime);
+      } else if (endTime instanceof Date) {
+        // If it's a Date object, convert to Luxon DateTime
+        notificationTime = DateTime.fromJSDate(endTime);
+      } else {
+        console.log('❌ Invalid endTime format:', endTime);
+        return;
+      }
+
+      // Ensure we have a valid DateTime
+      if (!notificationTime.isValid) {
+        console.log('❌ Invalid notification time:', endTime);
+        return;
+      }
+
+      const now = DateTime.local();
 
       console.log(`🔔 Attempting to schedule notification:`);
       console.log(`   Session ID: ${sessionId}`);
       console.log(`   Device Type: ${deviceType}`);
-      console.log(`   End Time: ${notificationTime.toLocaleString()}`);
-      console.log(`   Current Time: ${now.toLocaleString()}`);
+      console.log(
+        `   End Time: ${notificationTime.toLocaleString(
+          DateTime.DATETIME_SHORT,
+        )}`,
+      );
+      console.log(
+        `   Current Time: ${now.toLocaleString(DateTime.DATETIME_SHORT)}`,
+      );
 
       // Don't schedule if end time is in the past
       if (notificationTime <= now) {
@@ -61,9 +90,9 @@ class NotificationService {
         return;
       }
 
-      // Calculate delay in milliseconds
-      const delay = notificationTime.getTime() - now.getTime();
-      console.log(`   Delay: ${delay}ms (${Math.round(delay/1000)} seconds)`);
+      // Calculate delay in milliseconds using Luxon
+      const delay = notificationTime.diff(now).milliseconds;
+      console.log(`   Delay: ${delay}ms (${Math.round(delay / 1000)} seconds)`);
 
       const notification = {
         identifier: sessionId,
@@ -80,18 +109,24 @@ class NotificationService {
       // Schedule the notification
       console.log(`🔔 Calling Notifications.postLocalNotification...`);
       Notifications.postLocalNotification(notification, delay);
-      console.log(`✅ Notification scheduled successfully for ${delay}ms from now`);
-      
+      console.log(
+        `✅ Notification scheduled successfully for ${delay}ms from now`,
+      );
+
       // Also try immediate notification for testing
-      if (delay < 10000) { // Less than 10 seconds
+      if (delay < 10000) {
+        // Less than 10 seconds
         console.log(`🧪 Testing immediate notification...`);
         setTimeout(() => {
-          Notifications.postLocalNotification({
-            ...notification,
-            identifier: sessionId + '_test',
-            title: "🧪 Test Notification",
-            body: "This is a test notification to verify the system works.",
-          }, 0);
+          Notifications.postLocalNotification(
+            {
+              ...notification,
+              identifier: sessionId + '_test',
+              title: '🧪 Test Notification',
+              body: 'This is a test notification to verify the system works.',
+            },
+            0,
+          );
         }, 2000); // 2 seconds delay for testing
       }
     } catch (error) {

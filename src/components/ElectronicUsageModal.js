@@ -1,5 +1,6 @@
 // src/components/ElectronicUsageModal.js
 import React, { useState, useEffect } from 'react';
+import { DateTime } from 'luxon';
 import {
   View,
   Text,
@@ -11,11 +12,21 @@ import {
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { useTheme } from '../context/ThemeContext';
-import TimeDataService, { ELECTRONIC_CATEGORIES, ELECTRONIC_LABELS } from '../services/TimeDataService';
+import TimeDataService, {
+  ELECTRONIC_CATEGORIES,
+  ELECTRONIC_LABELS,
+} from '../services/TimeDataService';
 
-const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }) => {
+const ElectronicUsageModal = ({
+  visible,
+  onClose,
+  onSessionUpdate,
+  timeSummary,
+}) => {
   const { theme } = useTheme();
-  const [selectedCategory, setSelectedCategory] = useState(ELECTRONIC_CATEGORIES.TABLET);
+  const [selectedCategory, setSelectedCategory] = useState(
+    ELECTRONIC_CATEGORIES.TABLET,
+  );
   const [selectedTime, setSelectedTime] = useState(30);
   const [customTime, setCustomTime] = useState('');
   const [isUsingCustom, setIsUsingCustom] = useState(false);
@@ -23,16 +34,16 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
   // Quick time options that don't exceed remaining time
   const getAvailableTimeOptions = () => {
     if (!timeSummary) return [];
-    
+
     const options = [15, 30, 60, 120]; // 15min, 30min, 1hr, 2hr
     return options.filter(time => time <= timeSummary.totals.remaining);
   };
 
   // Format end time for display
-  const getEstimatedEndTime = (minutes) => {
-    const now = new Date();
-    const endTime = new Date(now.getTime() + (minutes * 60000));
-    return endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const getEstimatedEndTime = minutes => {
+    const now = DateTime.local();
+    const endTime = now.plus({ minutes });
+    return endTime.toFormat('h:mm a'); // Returns "2:30 PM" format
   };
 
   // Get the time to use (either selected preset or custom)
@@ -51,20 +62,23 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
 
   const handleStartSession = async () => {
     const timeToUse = getTimeToUse();
-    
+
     if (timeToUse <= 0) {
       Alert.alert('Invalid Time', 'Please enter a valid time amount.');
       return;
     }
 
     if (timeToUse > timeSummary.totals.remaining) {
-      Alert.alert('Not Enough Time', `You only have ${timeSummary.totals.remaining} minutes remaining.`);
+      Alert.alert(
+        'Not Enough Time',
+        `You only have ${timeSummary.totals.remaining} minutes remaining.`,
+      );
       return;
     }
 
     const endTimeString = getEstimatedEndTime(timeToUse);
     const deviceName = ELECTRONIC_LABELS[selectedCategory];
-    
+
     Alert.alert(
       'Start Session',
       `Start ${timeToUse} minute ${deviceName} session?\n\nFinish by: ${endTimeString}\nTime remaining after: ${getRemainingAfterSession()} minutes`,
@@ -73,21 +87,24 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
         {
           text: 'Start Session',
           onPress: async () => {
-            const result = await TimeDataService.startElectronicSession(selectedCategory, timeToUse);
-            
+            const result = await TimeDataService.startElectronicSession(
+              selectedCategory,
+              timeToUse,
+            );
+
             if (result.success) {
               onSessionUpdate();
               onClose();
               Alert.alert(
                 'Session Started!',
-                `${deviceName} session started. Come back to end your session when finished.`
+                `${deviceName} session started. Come back to end your session when finished.`,
               );
             } else {
               Alert.alert('Error', result.error);
             }
-          }
-        }
-      ]
+          },
+        },
+      ],
     );
   };
 
@@ -106,7 +123,8 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
 
   const availableOptions = getAvailableTimeOptions();
   const timeToUse = getTimeToUse();
-  const isValidTime = timeToUse > 0 && timeToUse <= (timeSummary?.totals.remaining || 0);
+  const isValidTime =
+    timeToUse > 0 && timeToUse <= (timeSummary?.totals.remaining || 0);
 
   return (
     <Modal
@@ -116,19 +134,32 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
-        <View style={[styles.modalContainer, { backgroundColor: theme.menuBackground }]}>
-          
+        <View
+          style={[
+            styles.modalContainer,
+            { backgroundColor: theme.menuBackground },
+          ]}
+        >
           {/* Header */}
           <Text style={[styles.modalTitle, { color: theme.text }]}>
             Electronic Usage
           </Text>
-          <Text style={[styles.timeRemaining, { color: theme.text, opacity: 0.7 }]}>
+          <Text
+            style={[styles.timeRemaining, { color: theme.text, opacity: 0.7 }]}
+          >
             {timeSummary?.totals.remaining || 0} minutes remaining today
           </Text>
 
           {/* Device Selection */}
-          <Text style={[styles.sectionLabel, { color: theme.text }]}>Device:</Text>
-          <View style={[styles.pickerContainer, { backgroundColor: theme.isDark ? '#333' : '#f5f5f5' }]}>
+          <Text style={[styles.sectionLabel, { color: theme.text }]}>
+            Device:
+          </Text>
+          <View
+            style={[
+              styles.pickerContainer,
+              { backgroundColor: theme.isDark ? '#333' : '#f5f5f5' },
+            ]}
+          >
             <Picker
               selectedValue={selectedCategory}
               onValueChange={setSelectedCategory}
@@ -142,21 +173,26 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
           </View>
 
           {/* Time Selection */}
-          <Text style={[styles.sectionLabel, { color: theme.text }]}>Estimated Time:</Text>
-          
+          <Text style={[styles.sectionLabel, { color: theme.text }]}>
+            Estimated Time:
+          </Text>
+
           {/* Quick Time Buttons */}
           {availableOptions.length > 0 && (
             <View style={styles.quickTimeContainer}>
-              {availableOptions.map((time) => (
+              {availableOptions.map(time => (
                 <TouchableOpacity
                   key={time}
                   style={[
                     styles.quickTimeButton,
                     {
-                      backgroundColor: (!isUsingCustom && selectedTime === time) 
-                        ? theme.buttonBackground 
-                        : theme.isDark ? '#333' : '#f5f5f5',
-                    }
+                      backgroundColor:
+                        !isUsingCustom && selectedTime === time
+                          ? theme.buttonBackground
+                          : theme.isDark
+                          ? '#333'
+                          : '#f5f5f5',
+                    },
                   ]}
                   onPress={() => {
                     setSelectedTime(time);
@@ -164,14 +200,17 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
                     setCustomTime('');
                   }}
                 >
-                  <Text style={[
-                    styles.quickTimeText,
-                    {
-                      color: (!isUsingCustom && selectedTime === time) 
-                        ? theme.buttonText 
-                        : theme.text,
-                    }
-                  ]}>
+                  <Text
+                    style={[
+                      styles.quickTimeText,
+                      {
+                        color:
+                          !isUsingCustom && selectedTime === time
+                            ? theme.buttonText
+                            : theme.text,
+                      },
+                    ]}
+                  >
                     {time}m
                   </Text>
                 </TouchableOpacity>
@@ -180,18 +219,22 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
           )}
 
           {/* Custom Time Input */}
-          <Text style={[styles.customLabel, { color: theme.text }]}>Or enter custom minutes:</Text>
+          <Text style={[styles.customLabel, { color: theme.text }]}>
+            Or enter custom minutes:
+          </Text>
           <TextInput
             style={[
               styles.customInput,
               {
                 backgroundColor: theme.isDark ? '#333' : '#f5f5f5',
                 color: theme.text,
-                borderColor: isUsingCustom ? theme.buttonBackground : 'transparent',
-              }
+                borderColor: isUsingCustom
+                  ? theme.buttonBackground
+                  : 'transparent',
+              },
             ]}
             value={customTime}
-            onChangeText={(text) => {
+            onChangeText={text => {
               setCustomTime(text);
               setIsUsingCustom(text.length > 0);
             }}
@@ -203,10 +246,20 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
           {/* Time Preview */}
           {isValidTime && (
             <View style={styles.previewContainer}>
-              <Text style={[styles.previewText, { color: theme.text, opacity: 0.8 }]}>
+              <Text
+                style={[
+                  styles.previewText,
+                  { color: theme.text, opacity: 0.8 },
+                ]}
+              >
                 Finish by: {getEstimatedEndTime(timeToUse)}
               </Text>
-              <Text style={[styles.previewText, { color: theme.text, opacity: 0.8 }]}>
+              <Text
+                style={[
+                  styles.previewText,
+                  { color: theme.text, opacity: 0.8 },
+                ]}
+              >
                 Will leave you: {getRemainingAfterSession()} minutes
               </Text>
             </View>
@@ -215,28 +268,36 @@ const ElectronicUsageModal = ({ visible, onClose, onSessionUpdate, timeSummary }
           {/* Buttons */}
           <View style={styles.buttonContainer}>
             <TouchableOpacity
-              style={[styles.cancelButton, { backgroundColor: theme.isDark ? '#444' : '#ddd' }]}
+              style={[
+                styles.cancelButton,
+                { backgroundColor: theme.isDark ? '#444' : '#ddd' },
+              ]}
               onPress={onClose}
             >
-              <Text style={[styles.cancelButtonText, { color: theme.text }]}>Cancel</Text>
+              <Text style={[styles.cancelButtonText, { color: theme.text }]}>
+                Cancel
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[
                 styles.startButton,
                 {
-                  backgroundColor: isValidTime ? theme.buttonBackground : '#999',
-                }
+                  backgroundColor: isValidTime
+                    ? theme.buttonBackground
+                    : '#999',
+                },
               ]}
               onPress={handleStartSession}
               disabled={!isValidTime}
             >
-              <Text style={[styles.startButtonText, { color: theme.buttonText }]}>
+              <Text
+                style={[styles.startButtonText, { color: theme.buttonText }]}
+              >
                 Start Session
               </Text>
             </TouchableOpacity>
           </View>
-
         </View>
       </View>
     </Modal>

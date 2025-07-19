@@ -15,6 +15,7 @@ import EndSessionModal from '../components/EndSessionModal';
 import ActiveSessionBanner from '../components/ActiveSessionBanner';
 import EarnBonusModal from '../components/EarnBonusModal';
 import TodaysHistoryModal from '../components/TodaysHistoryModal';
+import QuickAddSessionModal from '../components/QuickAddSessionModal';
 
 const DashboardScreen = ({ userName, onNavigateToPastDays }) => {
   const { theme } = useTheme();
@@ -24,6 +25,8 @@ const DashboardScreen = ({ userName, onNavigateToPastDays }) => {
   const [showEndSessionModal, setShowEndSessionModal] = useState(false);
   const [showEarnBonusModal, setShowEarnBonusModal] = useState(false);
   const [showTodaysHistoryModal, setShowTodaysHistoryModal] = useState(false);
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false);
+  const [todayRawData, setTodayRawData] = useState(null);
 
   useEffect(() => {
     loadTimeSummary();
@@ -32,7 +35,13 @@ const DashboardScreen = ({ userName, onNavigateToPastDays }) => {
   const loadTimeSummary = async () => {
     try {
       const summary = await TimeDataService.getTimeSummary();
+      console.log('--- Time Summary Loaded ---', summary);
       setTimeSummary(summary);
+
+      // Also get the raw today data that contains activities
+      const rawData = await TimeDataService.getTodayData();
+      console.log('--- Raw Today Data ---', rawData);
+      setTodayRawData(rawData);
     } catch (error) {
       console.error('Error loading time summary:', error);
     } finally {
@@ -68,19 +77,57 @@ const DashboardScreen = ({ userName, onNavigateToPastDays }) => {
     setShowTodaysHistoryModal(true);
   };
 
+  const handleHistoryUpdate = () => {
+    // Reload data when history is edited
+    loadTimeSummary();
+  };
+
+  const handleQuickAdd = () => {
+    setShowQuickAddModal(true);
+  };
+
   const handlePastDays = () => {
     onNavigateToPastDays();
   };
 
+  // Get punishment statistics for today
+  const getPunishmentStats = () => {
+    if (!todayRawData || !todayRawData.activities) {
+      return { count: 0, totalMinutes: 0 };
+    }
+
+    // Filter for parent action punishments from raw data
+    const punishments = todayRawData.activities.filter(
+      activity =>
+        activity.type === 'parent_action' && activity.action === 'punishment',
+    );
+
+    // Calculate total punishment minutes
+    const totalMinutes = punishments.reduce((total, punishment) => {
+      return total + (punishment.minutes || 0);
+    }, 0);
+
+    console.log('📊 Punishment stats:', {
+      count: punishments.length,
+      totalMinutes,
+      punishments,
+    });
+
+    return {
+      count: punishments.length,
+      totalMinutes: totalMinutes,
+    };
+  };
+
   // Convert seconds to minutes and seconds display
-  const formatTimeSeconds = (seconds) => {
+  const formatTimeSeconds = seconds => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   // Convert minutes to hours and minutes display
-  const formatTime = (minutes) => {
+  const formatTime = minutes => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     if (hours > 0) {
@@ -100,7 +147,9 @@ const DashboardScreen = ({ userName, onNavigateToPastDays }) => {
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: theme.background }]}>
-        <Text style={[styles.loadingText, { color: theme.text }]}>Loading...</Text>
+        <Text style={[styles.loadingText, { color: theme.text }]}>
+          Loading...
+        </Text>
       </View>
     );
   }
@@ -108,179 +157,365 @@ const DashboardScreen = ({ userName, onNavigateToPastDays }) => {
   if (!timeSummary) {
     return (
       <View style={[styles.container, { backgroundColor: theme.background }]}>
-        <Text style={[styles.errorText, { color: theme.text }]}>Error loading data</Text>
+        <Text style={[styles.errorText, { color: theme.text }]}>
+          Error loading data
+        </Text>
       </View>
     );
   }
 
   // NOW it's safe to define and call these functions that use timeSummary
-  const progressPercentage = (timeSummary.totals.used / timeSummary.totals.available) * 100;
-  const timeColor = getTimeColor(timeSummary.totals.remaining, timeSummary.totals.available);
+  const progressPercentage =
+    (timeSummary.totals.used / timeSummary.totals.available) * 100;
+  const timeColor = getTimeColor(
+    timeSummary.totals.remaining,
+    timeSummary.totals.available,
+  );
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
-      
-        {/* Active Session Banner */}
-        <ActiveSessionBanner 
-            activeSession={timeSummary.activeSession}
-            onEndSession={() => setShowEndSessionModal(true)}
-        />
+    <ScrollView
+      style={[styles.container, { backgroundColor: theme.background }]}
+    >
+      {/* Active Session Banner */}
+      <ActiveSessionBanner
+        activeSession={timeSummary.activeSession}
+        onEndSession={() => setShowEndSessionModal(true)}
+      />
 
-        {/* Main Time Display */}
-        <View style={styles.timeSection}>
-            <Text style={[styles.timeLabel, { color: theme.text }]}>Time Remaining Today</Text>
-            <Text style={[styles.timeRemaining, { color: timeColor }]}>
-            {formatTime(timeSummary.totals.remaining)}
-            </Text>
-            <Text style={[styles.timeSubtext, { color: theme.text, opacity: 0.7 }]}>
-            of {formatTime(timeSummary.totals.available)} available
-            </Text>
+      {/* Main Time Display */}
+      <View style={styles.timeSection}>
+        <Text style={[styles.timeLabel, { color: theme.text }]}>
+          Time Remaining Today
+        </Text>
+        <Text style={[styles.timeRemaining, { color: timeColor }]}>
+          {formatTime(timeSummary.totals.remaining)}
+        </Text>
+        <Text style={[styles.timeSubtext, { color: theme.text, opacity: 0.7 }]}>
+          of {formatTime(timeSummary.totals.available)} available
+        </Text>
 
-            {/* Progress Bar */}
-            <View style={[styles.progressContainer, { backgroundColor: theme.isDark ? '#333' : '#E0E0E0' }]}>
-            <View 
-                style={[
-                styles.progressBar, 
-                { 
-                    backgroundColor: timeColor,
-                    width: `${Math.min(progressPercentage, 100)}%` 
-                }
-                ]} 
-            />
-            </View>
-            <Text style={[styles.progressText, { color: theme.text, opacity: 0.6 }]}>
-            {formatTime(timeSummary.totals.used)} used today
+        {/* Progress Bar */}
+        <View
+          style={[
+            styles.progressContainer,
+            { backgroundColor: theme.isDark ? '#333' : '#E0E0E0' },
+          ]}
+        >
+          <View
+            style={[
+              styles.progressBar,
+              {
+                backgroundColor: timeColor,
+                width: `${Math.min(progressPercentage, 100)}%`,
+              },
+            ]}
+          />
+        </View>
+        <Text
+          style={[styles.progressText, { color: theme.text, opacity: 0.6 }]}
+        >
+          {formatTime(timeSummary.totals.used)} used today
+        </Text>
+      </View>
+
+      {/* Quick Stats */}
+      <View style={styles.statsSection}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>
+          Today's Summary
+        </Text>
+
+        <View style={styles.statsRow}>
+          <View
+            style={[
+              styles.statCard,
+              {
+                backgroundColor: theme.isDark
+                  ? '#2A2A2A'
+                  : 'rgba(255,255,255,0.8)',
+              },
+            ]}
+          >
+            <Text
+              style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}
+            >
+              Base Time
             </Text>
+            <Text style={[styles.statValue, { color: theme.text }]}>
+              {formatTime(timeSummary.baseTime.remaining)} left
+            </Text>
+          </View>
+
+          <View
+            style={[
+              styles.statCard,
+              {
+                backgroundColor: theme.isDark
+                  ? '#2A2A2A'
+                  : 'rgba(255,255,255,0.8)',
+              },
+            ]}
+          >
+            <Text
+              style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}
+            >
+              Bonus Earned
+            </Text>
+            <Text style={[styles.statValue, { color: theme.text }]}>
+              {timeSummary.bonusTime.totalEarned} min
+            </Text>
+          </View>
         </View>
 
-        {/* Quick Stats */}
-        <View style={styles.statsSection}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>Today's Summary</Text>
-            
-            <View style={styles.statsRow}>
-            <View style={[styles.statCard, { backgroundColor: theme.isDark ? '#2A2A2A' : 'rgba(255,255,255,0.8)' }]}>
-                <Text style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}>Base Time</Text>
-                <Text style={[styles.statValue, { color: theme.text }]}>
-                {formatTime(timeSummary.baseTime.remaining)} left
-                </Text>
-            </View>
+        <View style={styles.statsRow}>
+          <View
+            style={[
+              styles.statCard,
+              {
+                backgroundColor: theme.isDark
+                  ? '#2A2A2A'
+                  : 'rgba(255,255,255,0.8)',
+              },
+            ]}
+          >
+            <Text
+              style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}
+            >
+              Soccer Activity
+            </Text>
+            <Text style={[styles.statValue, { color: theme.text }]}>
+              {timeSummary.bonusTime.soccer.activityMinutes} min
+            </Text>
+            <Text style={[styles.statBonus, { color: '#4CAF50' }]}>
+              +{timeSummary.bonusTime.soccer.earned} bonus
+            </Text>
+          </View>
 
-            <View style={[styles.statCard, { backgroundColor: theme.isDark ? '#2A2A2A' : 'rgba(255,255,255,0.8)' }]}>
-                <Text style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}>Bonus Earned</Text>
-                <Text style={[styles.statValue, { color: theme.text }]}>
-                {timeSummary.bonusTime.totalEarned} min
-                </Text>
-            </View>
-            </View>
-
-            <View style={styles.statsRow}>
-            <View style={[styles.statCard, { backgroundColor: theme.isDark ? '#2A2A2A' : 'rgba(255,255,255,0.8)' }]}>
-                <Text style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}>Soccer Activity</Text>
-                <Text style={[styles.statValue, { color: theme.text }]}>
-                {timeSummary.bonusTime.soccer.activityMinutes} min
-                </Text>
-                <Text style={[styles.statBonus, { color: '#4CAF50' }]}>
-                +{timeSummary.bonusTime.soccer.earned} bonus
-                </Text>
-            </View>
-
-            <View style={[styles.statCard, { backgroundColor: theme.isDark ? '#2A2A2A' : 'rgba(255,255,255,0.8)' }]}>
-                <Text style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}>Fitness Activity</Text>
-                <Text style={[styles.statValue, { color: theme.text }]}>
-                {timeSummary.bonusTime.fitness.activityMinutes} min
-                </Text>
-                <Text style={[styles.statBonus, { color: '#4CAF50' }]}>
-                +{timeSummary.bonusTime.fitness.earned} bonus
-                </Text>
-            </View>
-            </View>
+          <View
+            style={[
+              styles.statCard,
+              {
+                backgroundColor: theme.isDark
+                  ? '#2A2A2A'
+                  : 'rgba(255,255,255,0.8)',
+              },
+            ]}
+          >
+            <Text
+              style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}
+            >
+              Fitness Activity
+            </Text>
+            <Text style={[styles.statValue, { color: theme.text }]}>
+              {timeSummary.bonusTime.fitness.activityMinutes} min
+            </Text>
+            <Text style={[styles.statBonus, { color: '#4CAF50' }]}>
+              +{timeSummary.bonusTime.fitness.earned} bonus
+            </Text>
+          </View>
         </View>
 
-        {/* Primary Action Buttons */}
-        <View style={styles.actionsSection}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>Quick Actions</Text>
-            
-            <TouchableOpacity 
-            style={[styles.primaryButton, { backgroundColor: theme.buttonBackground }]}
-            onPress={handleElectronicUsage}
-            >
-            <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>
-                {timeSummary.activeSession ? '📱 End Electronic Session' : '📱 Start Electronic Session'}
+        {/* NEW: Punishment Stats Row */}
+       <View style={styles.statsRow}>
+         <View
+           style={[
+             styles.statCard,
+             {
+               backgroundColor: theme.isDark
+                 ? '#2A2A2A'
+                 : 'rgba(255,255,255,0.8)',
+             },
+           ]}
+         >
+           <Text
+             style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}
+           >
+             Reading Activity
+           </Text>
+           <Text style={[styles.statValue, { color: theme.text }]}>
+             {timeSummary.bonusTime.reading.activityMinutes} min
+           </Text>
+           <Text style={[styles.statBonus, { color: '#4CAF50' }]}>
+             +{timeSummary.bonusTime.reading.earned} bonus
+           </Text>
+         </View>
+
+         <View
+           style={[
+             styles.statCard,
+             {
+               backgroundColor: theme.isDark
+                 ? '#2A2A2A'
+                 : 'rgba(255,255,255,0.8)',
+             },
+           ]}
+         >
+           <Text
+             style={[styles.statLabel, { color: theme.text, opacity: 0.7 }]}
+           >
+             Punishments Today
+           </Text>
+           <Text style={[styles.statValue, { color: '#F44336' }]}>
+             {getPunishmentStats().count}{' '}
+             {getPunishmentStats().count === 1 ? 'punishment' : 'punishments'}
+           </Text>
+           <Text style={[styles.statBonus, { color: '#F44336' }]}>
+             -{getPunishmentStats().totalMinutes} min deducted
+           </Text>
+         </View>
+       </View>
+      </View>
+
+      {/* Primary Action Buttons */}
+      <View style={styles.actionsSection}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>
+          Quick Actions
+        </Text>
+
+        <TouchableOpacity
+          style={[
+            styles.primaryButton,
+            { backgroundColor: theme.buttonBackground },
+          ]}
+          onPress={handleElectronicUsage}
+        >
+          <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>
+            {timeSummary.activeSession
+              ? '📱 End Electronic Session'
+              : '📱 Start Electronic Session'}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.secondaryButton,
+            {
+              backgroundColor: theme.isDark ? '#333' : 'rgba(255,255,255,0.8)',
+            },
+          ]}
+          onPress={handleQuickAdd}
+        >
+          <Text style={[styles.secondaryButtonText, { color: theme.text }]}>
+            📝 Quick Add Session
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.primaryButton,
+            { backgroundColor: theme.buttonBackground },
+          ]}
+          onPress={handleEarnBonus}
+        >
+          <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>
+            ⚽ Earn Bonus Time
+          </Text>
+        </TouchableOpacity>
+
+        <View style={styles.secondaryButtonsRow}>
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              {
+                backgroundColor: theme.isDark
+                  ? '#333'
+                  : 'rgba(255,255,255,0.8)',
+              },
+            ]}
+            onPress={handleTodayHistory}
+          >
+            <Text style={[styles.secondaryButtonText, { color: theme.text }]}>
+              📋 Today's History
             </Text>
-            </TouchableOpacity>
+          </TouchableOpacity>
 
-            <TouchableOpacity 
-            style={[styles.primaryButton, { backgroundColor: theme.buttonBackground }]}
-            onPress={handleEarnBonus}
-            >
-            <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>
-                ⚽ Earn Bonus Time
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              {
+                backgroundColor: theme.isDark
+                  ? '#333'
+                  : 'rgba(255,255,255,0.8)',
+              },
+            ]}
+            onPress={handlePastDays}
+          >
+            <Text style={[styles.secondaryButtonText, { color: theme.text }]}>
+              📅 Past Days
             </Text>
-            </TouchableOpacity>
-
-            <View style={styles.secondaryButtonsRow}>
-            <TouchableOpacity 
-                style={[styles.secondaryButton, { backgroundColor: theme.isDark ? '#333' : 'rgba(255,255,255,0.8)' }]}
-                onPress={handleTodayHistory}
-            >
-                <Text style={[styles.secondaryButtonText, { color: theme.text }]}>
-                📋 Today's History
-                </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-                style={[styles.secondaryButton, { backgroundColor: theme.isDark ? '#333' : 'rgba(255,255,255,0.8)' }]}
-                onPress={handlePastDays}
-            >
-                <Text style={[styles.secondaryButtonText, { color: theme.text }]}>
-                📅 Past Days
-                </Text>
-            </TouchableOpacity>
-            </View>
+          </TouchableOpacity>
         </View>
+      </View>
 
-        {/* Activity Suggestions */}
-        {timeSummary.bonusTime.totalEarned < 30 && (
-            <View style={styles.suggestionsSection}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>💡 Earn More Time!</Text>
-            <View style={[styles.suggestionCard, { backgroundColor: theme.isDark ? '#1A3A1A' : 'rgba(76, 175, 80, 0.1)' }]}>
-                <Text style={[styles.suggestionText, { color: theme.text }]}>
-                {timeSummary.bonusTime.soccer.earned < 30 
-                    ? `🏃 ${(30 - timeSummary.bonusTime.soccer.earned) * 2} min of soccer = +${30 - timeSummary.bonusTime.soccer.earned} min bonus`
-                    : `💪 ${(30 - timeSummary.bonusTime.fitness.earned) * 2} min of fitness = +${30 - timeSummary.bonusTime.fitness.earned} min bonus`
-                }
-                </Text>
-            </View>
-            </View>
-        )}
+      {/* Activity Suggestions */}
+      {timeSummary.bonusTime.totalEarned < 30 && (
+        <View style={styles.suggestionsSection}>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>
+            💡 Earn More Time!
+          </Text>
+          <View
+            style={[
+              styles.suggestionCard,
+              {
+                backgroundColor: theme.isDark
+                  ? '#1A3A1A'
+                  : 'rgba(76, 175, 80, 0.1)',
+              },
+            ]}
+          >
+            <Text style={[styles.suggestionText, { color: theme.text }]}>
+              {timeSummary.bonusTime.soccer.earned < 30
+                ? `🏃 ${
+                    (30 - timeSummary.bonusTime.soccer.earned) * 2
+                  } min of soccer = +${
+                    30 - timeSummary.bonusTime.soccer.earned
+                  } min bonus`
+                : `💪 ${
+                    (30 - timeSummary.bonusTime.fitness.earned) * 2
+                  } min of fitness = +${
+                    30 - timeSummary.bonusTime.fitness.earned
+                  } min bonus`}
+            </Text>
+          </View>
+        </View>
+      )}
 
-        {/* Bottom spacing */}
-        <View style={{ height: 40 }} />
+      {/* Bottom spacing */}
+      <View style={{ height: 40 }} />
 
-        {/* Modals */}
-        <ElectronicUsageModal
-            visible={showElectronicModal}
-            onClose={() => setShowElectronicModal(false)}
-            onSessionUpdate={handleSessionUpdate}
-            timeSummary={timeSummary}
-        />
+      {/* Modals */}
+      <ElectronicUsageModal
+        visible={showElectronicModal}
+        onClose={() => setShowElectronicModal(false)}
+        onSessionUpdate={handleSessionUpdate}
+        timeSummary={timeSummary}
+      />
 
-        <EndSessionModal
-            visible={showEndSessionModal}
-            onClose={() => setShowEndSessionModal(false)}
-            onSessionUpdate={handleSessionUpdate}
-            activeSession={timeSummary?.activeSession}
-        />
-        <EarnBonusModal
-            visible={showEarnBonusModal}
-            onClose={() => setShowEarnBonusModal(false)}
-            onBonusEarned={handleBonusEarned}
-            timeSummary={timeSummary}
-        />
-        <TodaysHistoryModal
-            visible={showTodaysHistoryModal}
-            onClose={() => setShowTodaysHistoryModal(false)}
-        />
+      <EndSessionModal
+        visible={showEndSessionModal}
+        onClose={() => setShowEndSessionModal(false)}
+        onSessionUpdate={handleSessionUpdate}
+        activeSession={timeSummary?.activeSession}
+      />
+
+      <EarnBonusModal
+        visible={showEarnBonusModal}
+        onClose={() => setShowEarnBonusModal(false)}
+        onBonusEarned={handleBonusEarned}
+        timeSummary={timeSummary}
+      />
+
+      <TodaysHistoryModal
+        visible={showTodaysHistoryModal}
+        onClose={() => setShowTodaysHistoryModal(false)}
+        onHistoryUpdate={handleHistoryUpdate}
+      />
+
+      <QuickAddSessionModal
+        visible={showQuickAddModal}
+        onClose={() => setShowQuickAddModal(false)}
+        onSessionAdded={handleSessionUpdate}
+        timeSummary={timeSummary}
+      />
     </ScrollView>
   );
 };
@@ -389,6 +624,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 12,
     alignItems: 'center',
+    marginBottom: 12,
   },
   secondaryButtonText: {
     fontSize: 14,

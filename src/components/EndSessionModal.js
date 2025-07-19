@@ -1,5 +1,6 @@
 // src/components/EndSessionModal.js
 import React, { useState, useEffect } from 'react';
+import { DateTime } from 'luxon';
 import {
   View,
   Text,
@@ -10,9 +11,16 @@ import {
   TextInput,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
-import TimeDataService, { ELECTRONIC_LABELS } from '../services/TimeDataService';
+import TimeDataService, {
+  ELECTRONIC_LABELS,
+} from '../services/TimeDataService';
 
-const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) => {
+const EndSessionModal = ({
+  visible,
+  onClose,
+  onSessionUpdate,
+  activeSession,
+}) => {
   const { theme } = useTheme();
   const [adjustedTime, setAdjustedTime] = useState('');
   const [isAdjusting, setIsAdjusting] = useState(false);
@@ -20,13 +28,14 @@ const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) =
   // Calculate elapsed time since session started
   const getElapsedTime = () => {
     if (!activeSession) return 0;
-    const startTime = new Date(activeSession.startTime);
-    const now = new Date();
-    return Math.round((now - startTime) / 60000); // Convert to minutes
+    // 🔧 FIX: Use Luxon for timezone-aware time calculations
+    const startTime = DateTime.fromISO(activeSession.startTime);
+    const now = DateTime.local();
+    return Math.round(now.diff(startTime, 'minutes').minutes);
   };
 
   // Format time for display
-  const formatTime = (minutes) => {
+  const formatTime = minutes => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     if (hours > 0) {
@@ -35,49 +44,129 @@ const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) =
     return `${mins}m`;
   };
 
+  const formatTimeWithOvertime = minutes => {
+    if (minutes < 0) {
+      return `${formatTime(Math.abs(minutes))} over limit`;
+    }
+    return formatTime(minutes);
+  };
+
   const handleEndSession = async () => {
-    const timeToUse = isAdjusting && adjustedTime ? parseInt(adjustedTime) : getElapsedTime();
-    
+    const timeToUse =
+      isAdjusting && adjustedTime ? parseInt(adjustedTime) : getElapsedTime();
+
     if (timeToUse <= 0) {
-      Alert.alert('Invalid Time', 'Session time must be greater than 0 minutes.');
+      Alert.alert(
+        'Invalid Time',
+        'Session time must be greater than 0 minutes.',
+      );
       return;
     }
 
     const deviceName = ELECTRONIC_LABELS[activeSession.category];
     const elapsedTime = getElapsedTime();
     const difference = timeToUse - activeSession.estimatedMinutes;
-    const differenceText = difference > 0 ? `${difference}m over` : difference < 0 ? `${Math.abs(difference)}m under` : 'exactly as estimated';
+    const differenceText =
+      difference > 0
+        ? `${difference}m over`
+        : difference < 0
+        ? `${Math.abs(difference)}m under`
+        : 'exactly as estimated';
+
+    // 🔧 FIX: Get current time summary to check if this will cause overtime
+    let timeSummary = null;
+    try {
+      timeSummary = await TimeDataService.getTimeSummary();
+    } catch (error) {
+      console.error('Error getting time summary:', error);
+    }
+
+    const remainingTime = timeSummary ? timeSummary.totals.remaining : 0;
+    const willCauseOvertime = timeToUse > remainingTime;
+    const overtimeAmount = willCauseOvertime ? timeToUse - remainingTime : 0;
+
+    // Build the confirmation message
+    let confirmMessage = `End ${deviceName} session?\n\nEstimated: ${activeSession.estimatedMinutes}m\nActual: ${timeToUse}m (${differenceText})`;
+
+    if (willCauseOvertime && remainingTime > 0) {
+      confirmMessage += `\n\n⚠️ This will use ${timeToUse} minutes but you only have ${remainingTime} minutes remaining.\nThis will put you ${overtimeAmount} minutes over your daily limit.`;
+    } else if (willCauseOvertime && remainingTime <= 0) {
+      confirmMessage += `\n\n⚠️ You have no time remaining! This will put you ${timeToUse} minutes over your daily limit.`;
+    } else {
+      confirmMessage += `\n\nThis will use ${timeToUse} minutes from your daily time.`;
+    }
 
     Alert.alert(
-      'End Session',
-      `End ${deviceName} session?\n\nEstimated: ${activeSession.estimatedMinutes}m\nActual: ${timeToUse}m (${differenceText})\n\nThis will use ${timeToUse} minutes from your daily time.`,
+      willCauseOvertime ? '⚠️ Overtime Session' : 'End Session',
+      confirmMessage,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'End Session',
+          text: willCauseOvertime ? 'Save Anyway' : 'End Session',
+          style: willCauseOvertime ? 'destructive' : 'default',
           onPress: async () => {
-            const result = await TimeDataService.endElectronicSession(timeToUse);
-            
-            if (result.success) {
-              onSessionUpdate();
-              onClose();
-              
-              const successMessage = result.difference === 0 
-                ? `Perfect timing! Used exactly ${result.actualMinutes} minutes as estimated.`
-                : result.difference > 0 
-                  ? `Session ended! Used ${result.actualMinutes} minutes (${result.difference}m over estimate).`
-                  : `Great job! Finished early! Used ${result.actualMinutes} minutes (${Math.abs(result.difference)}m under estimate).`;
-              
-              Alert.alert(
-                'Session Complete!',
-                `${successMessage}\n\nTime remaining: ${formatTime(result.newTimeRemaining)}`
+            try {
+              // 🔧 FIX: Always allow session to end, even if it causes overtime
+              const result = await TimeDataService.endElectronicSession(
+                timeToUse,
               );
-            } else {
-              Alert.alert('Error', result.error);
+
+              if (result.success) {
+                onSessionUpdate();
+                onClose();
+
+                // Build success message based on overtime status
+                let successMessage = '';
+
+                if (result.difference === 0) {
+                  successMessage = `Perfect timing! Used exactly ${result.actualMinutes} minutes as estimated.`;
+                } else if (result.difference > 0) {
+                  successMessage = `Session ended! Used ${result.actualMinutes} minutes (${result.difference}m over estimate).`;
+                } else {
+                  successMessage = `Great job! Finished early! Used ${
+                    result.actualMinutes
+                  } minutes (${Math.abs(result.difference)}m under estimate).`;
+                }
+
+                // Add overtime warning if applicable
+                if (result.newTimeRemaining < 0) {
+                  successMessage += `\n\n⚠️ You are now ${Math.abs(
+                    result.newTimeRemaining,
+                  )} minutes over your daily limit.`;
+                } else {
+                  successMessage += `\n\nTime remaining: ${formatTime(
+                    result.newTimeRemaining,
+                  )}`;
+                }
+
+                Alert.alert(
+                  willCauseOvertime
+                    ? '⚠️ Session Saved (Overtime)'
+                    : 'Session Complete!',
+                  successMessage,
+                );
+              } else {
+                // 🔧 FIX: Handle specific error cases more gracefully
+                if (
+                  result.error &&
+                  result.error.includes('Not enough time remaining')
+                ) {
+                  // If the backend still blocks overtime, show a helpful message
+                  Alert.alert(
+                    'Session Over Time Limit',
+                    `This session would exceed your daily time limit. The session has been logged but you may need to adjust your time settings.\n\nError: ${result.error}`,
+                  );
+                } else {
+                  Alert.alert('Error', result.error || 'Failed to end session');
+                }
+              }
+            } catch (error) {
+              console.error('Error ending session:', error);
+              Alert.alert('Error', 'Failed to end session. Please try again.');
             }
-          }
-        }
-      ]
+          },
+        },
+      ],
     );
   };
 
@@ -95,13 +184,16 @@ const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) =
             if (result.success) {
               onSessionUpdate();
               onClose();
-              Alert.alert('Session Cancelled', 'No time was logged for this session.');
+              Alert.alert(
+                'Session Cancelled',
+                'No time was logged for this session.',
+              );
             } else {
               Alert.alert('Error', result.error);
             }
-          }
-        }
-      ]
+          },
+        },
+      ],
     );
   };
 
@@ -115,10 +207,11 @@ const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) =
   if (!activeSession) return null;
 
   const elapsedTime = getElapsedTime();
-  const timeToUse = isAdjusting && adjustedTime ? parseInt(adjustedTime) || 0 : elapsedTime;
+  const timeToUse =
+    isAdjusting && adjustedTime ? parseInt(adjustedTime) || 0 : elapsedTime;
   const deviceName = ELECTRONIC_LABELS[activeSession.category];
-  const estimatedEndTime = new Date(activeSession.estimatedEndTime);
-  const isOverTime = new Date() > estimatedEndTime;
+  const estimatedEndTime = DateTime.fromISO(activeSession.estimatedEndTime);
+  const isOverTime = DateTime.local() > estimatedEndTime;
 
   return (
     <Modal
@@ -128,27 +221,57 @@ const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) =
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
-        <View style={[styles.modalContainer, { backgroundColor: theme.menuBackground }]}>
-          
+        <View
+          style={[
+            styles.modalContainer,
+            { backgroundColor: theme.menuBackground },
+          ]}
+        >
           {/* Header */}
           <Text style={[styles.modalTitle, { color: theme.text }]}>
             End {deviceName} Session
           </Text>
-          
+
           {/* Session Info */}
-          <View style={[styles.sessionInfo, { backgroundColor: theme.isDark ? '#2A2A2A' : 'rgba(255,255,255,0.8)' }]}>
-            <Text style={[styles.sessionLabel, { color: theme.text, opacity: 0.7 }]}>Session Started:</Text>
-            <Text style={[styles.sessionValue, { color: theme.text }]}>
-              {new Date(activeSession.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          <View
+            style={[
+              styles.sessionInfo,
+              {
+                backgroundColor: theme.isDark
+                  ? '#2A2A2A'
+                  : 'rgba(255,255,255,0.8)',
+              },
+            ]}
+          >
+            <Text
+              style={[styles.sessionLabel, { color: theme.text, opacity: 0.7 }]}
+            >
+              Session Started:
             </Text>
-            
-            <Text style={[styles.sessionLabel, { color: theme.text, opacity: 0.7 }]}>Estimated Duration:</Text>
+            <Text style={[styles.sessionValue, { color: theme.text }]}>
+              {DateTime.fromISO(activeSession.startTime).toFormat('h:mm a')}
+            </Text>
+
+            <Text
+              style={[styles.sessionLabel, { color: theme.text, opacity: 0.7 }]}
+            >
+              Estimated Duration:
+            </Text>
             <Text style={[styles.sessionValue, { color: theme.text }]}>
               {activeSession.estimatedMinutes} minutes
             </Text>
-            
-            <Text style={[styles.sessionLabel, { color: theme.text, opacity: 0.7 }]}>Actual Time Elapsed:</Text>
-            <Text style={[styles.sessionValue, { color: isOverTime ? '#F44336' : theme.text }]}>
+
+            <Text
+              style={[styles.sessionLabel, { color: theme.text, opacity: 0.7 }]}
+            >
+              Actual Time Elapsed:
+            </Text>
+            <Text
+              style={[
+                styles.sessionValue,
+                { color: isOverTime ? '#F44336' : theme.text },
+              ]}
+            >
               {formatTime(elapsedTime)} {isOverTime && '(Over time!)'}
             </Text>
           </View>
@@ -158,21 +281,25 @@ const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) =
             <Text style={[styles.sectionLabel, { color: theme.text }]}>
               Adjust actual time used:
             </Text>
-            <Text style={[styles.helpText, { color: theme.text, opacity: 0.6 }]}>
+            <Text
+              style={[styles.helpText, { color: theme.text, opacity: 0.6 }]}
+            >
               Leave blank to use actual elapsed time ({formatTime(elapsedTime)})
             </Text>
-            
+
             <TextInput
               style={[
                 styles.adjustInput,
                 {
                   backgroundColor: theme.isDark ? '#333' : '#f5f5f5',
                   color: theme.text,
-                  borderColor: isAdjusting ? theme.buttonBackground : 'transparent',
-                }
+                  borderColor: isAdjusting
+                    ? theme.buttonBackground
+                    : 'transparent',
+                },
               ]}
               value={adjustedTime}
-              onChangeText={(text) => {
+              onChangeText={text => {
                 setAdjustedTime(text);
                 setIsAdjusting(text.length > 0);
               }}
@@ -187,25 +314,37 @@ const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) =
             <Text style={[styles.previewText, { color: theme.text }]}>
               Will log: {formatTime(timeToUse)}
             </Text>
-            <Text style={[styles.previewText, { color: theme.text, opacity: 0.7 }]}>
-              Difference from estimate: {timeToUse === activeSession.estimatedMinutes ? 'Perfect!' : 
-                timeToUse > activeSession.estimatedMinutes ? 
-                  `+${timeToUse - activeSession.estimatedMinutes}m over` : 
-                  `${activeSession.estimatedMinutes - timeToUse}m under`}
+            <Text
+              style={[styles.previewText, { color: theme.text, opacity: 0.7 }]}
+            >
+              Difference from estimate:{' '}
+              {timeToUse === activeSession.estimatedMinutes
+                ? 'Perfect!'
+                : timeToUse > activeSession.estimatedMinutes
+                ? `+${timeToUse - activeSession.estimatedMinutes}m over`
+                : `${activeSession.estimatedMinutes - timeToUse}m under`}
             </Text>
           </View>
 
           {/* Buttons */}
           <View style={styles.buttonContainer}>
             <TouchableOpacity
-              style={[styles.cancelButton, { backgroundColor: theme.isDark ? '#444' : '#ddd' }]}
+              style={[
+                styles.cancelButton,
+                { backgroundColor: theme.isDark ? '#444' : '#ddd' },
+              ]}
               onPress={onClose}
             >
-              <Text style={[styles.cancelButtonText, { color: theme.text }]}>Cancel</Text>
+              <Text style={[styles.cancelButtonText, { color: theme.text }]}>
+                Cancel
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.endButton, { backgroundColor: theme.buttonBackground }]}
+              style={[
+                styles.endButton,
+                { backgroundColor: theme.buttonBackground },
+              ]}
               onPress={handleEndSession}
             >
               <Text style={[styles.endButtonText, { color: theme.buttonText }]}>
@@ -213,7 +352,6 @@ const EndSessionModal = ({ visible, onClose, onSessionUpdate, activeSession }) =
               </Text>
             </TouchableOpacity>
           </View>
-
         </View>
       </View>
     </Modal>

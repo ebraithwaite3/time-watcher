@@ -15,33 +15,66 @@ import TimeDataService from '../services/TimeDataService';
 
 const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
   const { theme } = useTheme();
-  const [selectedActivity, setSelectedActivity] = useState('soccer');
+  const [selectedActivity, setSelectedActivity] = useState('');
   const [activityMinutes, setActivityMinutes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [availableActivities, setAvailableActivities] = useState([]);
 
-  // Reset form when modal opens
+  // Load available bonus activities from Redis when modal opens
   useEffect(() => {
     if (visible) {
-      setSelectedActivity('soccer');
+      loadAvailableActivities();
       setActivityMinutes('');
     }
   }, [visible]);
 
-  // Calculate bonus minutes from activity minutes
+  const loadAvailableActivities = async () => {
+    try {
+      const activities = await TimeDataService.getAvailableBonusActivities();
+      console.log('📋 Available bonus activities:', activities);
+      
+      setAvailableActivities(activities);
+      
+      // Set default selection to first available activity
+      if (activities.length > 0) {
+        setSelectedActivity(activities[0].value);
+      }
+    } catch (error) {
+      console.error('Error loading available activities:', error);
+      // Fallback to default activities
+      setAvailableActivities([
+        { id: 'soccer', label: 'Soccer Practice', value: 'soccer', maxMinutes: 30, ratio: 0.5 },
+        { id: 'fitness', label: 'Physical Activity', value: 'fitness', maxMinutes: 30, ratio: 1.0 },
+        { id: 'reading', label: 'Reading Time', value: 'reading', maxMinutes: 60, ratio: 0.25 }
+      ]);
+      setSelectedActivity('soccer');
+    }
+  };
+
+  // Get activity config for selected activity
+  const getSelectedActivityConfig = () => {
+    return availableActivities.find(activity => activity.value === selectedActivity) || 
+           { maxMinutes: 30, ratio: 0.5, label: 'Activity' };
+  };
+
+  // Calculate bonus minutes from activity minutes using Redis ratio
   const calculateBonus = (minutes) => {
     if (!minutes || minutes <= 0) return 0;
-    return Math.floor(minutes * 0.5); // 1 bonus minute per 2 activity minutes
+    const config = getSelectedActivityConfig();
+    return Math.floor(minutes * config.ratio);
   };
 
   // Get current progress for selected activity
   const getCurrentProgress = () => {
-    if (!timeSummary) return { earned: 0, activityMinutes: 0, maxPossible: 30 };
+    if (!timeSummary || !selectedActivity) return { earned: 0, activityMinutes: 0, maxPossible: 30 };
     
     const activity = timeSummary.bonusTime[selectedActivity];
+    const config = getSelectedActivityConfig();
+    
     return {
-      earned: activity.earned,
-      activityMinutes: activity.activityMinutes,
-      maxPossible: 30,
+      earned: activity?.earned || 0,
+      activityMinutes: activity?.activityMinutes || 0,
+      maxPossible: config.maxMinutes,
     };
   };
 
@@ -49,12 +82,13 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
   const getRemainingPotential = () => {
     const progress = getCurrentProgress();
     const totalBonusEarned = timeSummary ? timeSummary.bonusTime.totalEarned : 0;
+    const maxTotalBonus = timeSummary ? timeSummary.bonusTime.maxTotalPossible : 30;
     
-    // Can't exceed 30 minutes for this activity
+    // Can't exceed individual activity limit
     const activityLimit = Math.max(0, progress.maxPossible - progress.earned);
     
-    // Can't exceed 30 minutes total bonus
-    const totalLimit = Math.max(0, 30 - totalBonusEarned);
+    // Can't exceed total bonus limit
+    const totalLimit = Math.max(0, maxTotalBonus - totalBonusEarned);
     
     return Math.min(activityLimit, totalLimit);
   };
@@ -66,6 +100,21 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
     const remainingPotential = getRemainingPotential();
     
     return Math.min(potentialBonus, remainingPotential);
+  };
+
+  // Get emoji for activity type
+  const getActivityEmoji = (activityType) => {
+    const emojiMap = {
+      soccer: '⚽',
+      fitness: '💪',
+      reading: '📚',
+      swimming: '🏊',
+      running: '🏃',
+      cycling: '🚴',
+      basketball: '🏀',
+      tennis: '🎾'
+    };
+    return emojiMap[activityType] || '🎯';
   };
 
   // Handle activity submission
@@ -83,11 +132,11 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
     }
 
     const bonusEarned = getBonusFromInput();
-    const activityName = selectedActivity === 'soccer' ? 'Soccer' : 'Fitness';
+    const config = getSelectedActivityConfig();
     
     Alert.alert(
       'Log Activity',
-      `Log ${minutes} minutes of ${activityName}?\n\nBonus earned: +${bonusEarned} minutes`,
+      `Log ${minutes} minutes of ${config.label}?\n\nBonus earned: +${bonusEarned} minutes`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -95,6 +144,7 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
           onPress: async () => {
             setLoading(true);
             try {
+              console.log(`🎯 Logging activity: ${selectedActivity}, ${minutes} minutes`);
               const result = await TimeDataService.addActivityTime(selectedActivity, minutes);
               
               if (result.success) {
@@ -111,6 +161,7 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
                 Alert.alert('Error', result.error);
               }
             } catch (error) {
+              console.error('Error logging activity:', error);
               Alert.alert('Error', 'Failed to log activity. Please try again.');
             } finally {
               setLoading(false);
@@ -124,6 +175,7 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
   const progress = getCurrentProgress();
   const remainingPotential = getRemainingPotential();
   const bonusFromInput = getBonusFromInput();
+  const config = getSelectedActivityConfig();
 
   return (
     <Modal
@@ -141,63 +193,55 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
               Earn Bonus Time
             </Text>
             <Text style={[styles.subtitle, { color: theme.text, opacity: 0.7 }]}>
-              1 minute bonus for every 2 minutes of activity
+              Earn bonus minutes for physical activities and reading
             </Text>
 
             {/* Activity Selection */}
             <Text style={[styles.sectionLabel, { color: theme.text }]}>Activity:</Text>
             <View style={styles.activityButtons}>
-              <TouchableOpacity
-                style={[
-                  styles.activityButton,
-                  {
-                    backgroundColor: selectedActivity === 'soccer' 
-                      ? theme.buttonBackground 
-                      : theme.isDark ? '#333' : '#f5f5f5',
-                  }
-                ]}
-                onPress={() => setSelectedActivity('soccer')}
-              >
-                <Text style={[
-                  styles.activityButtonText,
-                  {
-                    color: selectedActivity === 'soccer' 
-                      ? theme.buttonText 
-                      : theme.text,
-                  }
-                ]}>
-                  ⚽ Soccer
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.activityButton,
-                  {
-                    backgroundColor: selectedActivity === 'fitness' 
-                      ? theme.buttonBackground 
-                      : theme.isDark ? '#333' : '#f5f5f5',
-                  }
-                ]}
-                onPress={() => setSelectedActivity('fitness')}
-              >
-                <Text style={[
-                  styles.activityButtonText,
-                  {
-                    color: selectedActivity === 'fitness' 
-                      ? theme.buttonText 
-                      : theme.text,
-                  }
-                ]}>
-                  💪 Fitness
-                </Text>
-              </TouchableOpacity>
+              {availableActivities.map((activity) => (
+                <TouchableOpacity
+                  key={activity.value}
+                  style={[
+                    styles.activityButton,
+                    {
+                      backgroundColor: selectedActivity === activity.value 
+                        ? theme.buttonBackground 
+                        : theme.isDark ? '#333' : '#f5f5f5',
+                      flex: availableActivities.length === 2 ? 0.48 : 0.31, // Adjust width based on number of activities
+                    }
+                  ]}
+                  onPress={() => setSelectedActivity(activity.value)}
+                >
+                  <Text style={[
+                    styles.activityButtonText,
+                    {
+                      color: selectedActivity === activity.value 
+                        ? theme.buttonText 
+                        : theme.text,
+                    }
+                  ]}>
+                    {getActivityEmoji(activity.value)} {activity.label}
+                  </Text>
+                  <Text style={[
+                    styles.activityRatio,
+                    {
+                      color: selectedActivity === activity.value 
+                        ? theme.buttonText 
+                        : theme.text,
+                      opacity: 0.7
+                    }
+                  ]}>
+                    {activity.ratio === 1 ? '1:1' : activity.ratio === 0.5 ? '2:1' : activity.ratio === 0.25 ? '4:1' : `${1/activity.ratio}:1`} ratio
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
             {/* Current Progress */}
             <View style={[styles.progressSection, { backgroundColor: theme.isDark ? '#2A2A2A' : 'rgba(255,255,255,0.8)' }]}>
               <Text style={[styles.progressTitle, { color: theme.text }]}>
-                {selectedActivity === 'soccer' ? 'Soccer' : 'Fitness'} Progress Today
+                {config.label} Progress Today
               </Text>
               
               <View style={styles.progressRow}>
@@ -215,6 +259,15 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
                 </Text>
                 <Text style={[styles.progressValue, { color: '#4CAF50' }]}>
                   {progress.earned} / {progress.maxPossible} min
+                </Text>
+              </View>
+
+              <View style={styles.progressRow}>
+                <Text style={[styles.progressLabel, { color: theme.text, opacity: 0.7 }]}>
+                  Bonus Ratio:
+                </Text>
+                <Text style={[styles.progressValue, { color: theme.text }]}>
+                  {config.ratio === 1 ? '1 min per 1 min' : config.ratio === 0.5 ? '1 min per 2 min' : config.ratio === 0.25 ? '1 min per 4 min' : `${config.ratio} min per 1 min`}
                 </Text>
               </View>
 
@@ -236,11 +289,17 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
                   You can still earn {remainingPotential} more minutes
                 </Text>
               )}
+              
+              {remainingPotential === 0 && (
+                <Text style={[styles.remainingText, { color: '#FF9800' }]}>
+                  Daily bonus limit reached for {config.label}
+                </Text>
+              )}
             </View>
 
             {/* Time Input */}
             <Text style={[styles.sectionLabel, { color: theme.text }]}>
-              Minutes spent on {selectedActivity === 'soccer' ? 'soccer' : 'fitness'} today:
+              Minutes spent on {config.label.toLowerCase()} today:
             </Text>
             
             <TextInput
@@ -280,23 +339,26 @@ const EarnBonusModal = ({ visible, onClose, onBonusEarned, timeSummary }) => {
             {/* Quick Time Buttons */}
             <Text style={[styles.sectionLabel, { color: theme.text }]}>Quick options:</Text>
             <View style={styles.quickTimeButtons}>
-              {[15, 30, 60, 90].map((time) => (
-                <TouchableOpacity
-                  key={time}
-                  style={[
-                    styles.quickTimeButton,
-                    { backgroundColor: theme.isDark ? '#333' : '#f5f5f5' }
-                  ]}
-                  onPress={() => setActivityMinutes(time.toString())}
-                >
-                  <Text style={[styles.quickTimeButtonText, { color: theme.text }]}>
-                    {time}m
-                  </Text>
-                  <Text style={[styles.quickTimeBonus, { color: '#4CAF50' }]}>
-                    +{Math.min(calculateBonus(time), remainingPotential)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {[15, 30, 60, 90].map((time) => {
+                const potentialBonus = Math.min(calculateBonus(time), remainingPotential);
+                return (
+                  <TouchableOpacity
+                    key={time}
+                    style={[
+                      styles.quickTimeButton,
+                      { backgroundColor: theme.isDark ? '#333' : '#f5f5f5' }
+                    ]}
+                    onPress={() => setActivityMinutes(time.toString())}
+                  >
+                    <Text style={[styles.quickTimeButtonText, { color: theme.text }]}>
+                      {time}m
+                    </Text>
+                    <Text style={[styles.quickTimeBonus, { color: '#4CAF50' }]}>
+                      +{potentialBonus}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             {/* Buttons */}
@@ -371,17 +433,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 20,
+    flexWrap: 'wrap',
+    gap: 8,
   },
   activityButton: {
-    flex: 0.48,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
     borderRadius: 12,
     alignItems: 'center',
+    minWidth: 100,
   },
   activityButtonText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
+    textAlign: 'center',
+  },
+  activityRatio: {
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: 'center',
   },
   progressSection: {
     padding: 16,
