@@ -17,7 +17,6 @@ import ParentDashboard from './src/screens/ParentDashboard';
 import Header from './src/components/Header';
 import timeWatcherRedis from './src/services/RedisService';
 import TimeDataService from './src/services/TimeDataService';
-// import NotificationService from './src/services/NotificationService';
 
 // Main App Component (wrapped in ThemeProvider)
 const AppContent = () => {
@@ -344,9 +343,6 @@ const AppContent = () => {
 
   // Check AsyncStorage when app starts
   useEffect(() => {
-    // Configure notifications
-    // NotificationService.configure();
-    
     loadUserData();
     
     // Start periodic sync
